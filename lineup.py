@@ -1,66 +1,33 @@
 import pandas as pd
-from pulp import *
-import openpyxl
-import re
+import cvxpy as cp
 
-players = pd.read_csv(r"/Users/ronan/Downloads/FanDuel-NFL-2020-11-15-51566-players-list.csv", usecols= ['Id', 'Position', 'FPPG', 'Salary'])
+salaries = pd.read_csv("/Users/ronan/Downloads/FanDuel-NFL-2020-11-15-51566-players-list.csv")
 
-wb = openpyxl.Workbook()
-ws = wb.active
+pos = salaries["Position"].values
+sal = salaries["Salary"].values
+nam = salaries["Nickname"].values
+pts = salaries["FPPG"].values
 
-availables = players.groupby(["Position", "Id", "FPPG", "Salary"]).agg('count')
-availables = availables.reset_index()
+isQB = (pos == 'QB').astype(float)
+isRB = (pos == 'RB').astype(float)
+isTE = (pos == 'TE').astype(float)
+isWR = (pos == 'WR').astype(float)
+isD = (pos == 'D').astype(float)
 
-salaries = {}
-points = {}
+number_of_players = len(pos)
+x = cp.Variable(number_of_players, boolean=True)
 
-for pos in availables.Position.unique():
-    available_pos = availables[availables.Position == pos]
-    salary = list(available_pos[['Id', 'Salary']].set_index("Id").to_dict().values())[0]
-    point = list(available_pos[['Id', 'FPPG']].set_index("Id").to_dict().values())[0]
+constraints = [
+    sum(x) == 9,
+    x @ sal <= 60000.0,
+    x @ isQB == 1,
+    x @ isTE >= 1,
+    x @ isRB >= 2,
+    x @ isWR >= 3,
+    x @ isD == 1]
 
-    salaries[pos] = salary
-    points[pos] = point
+objective = cp.Maximize(pts @ x)
 
-pos_num_available = {
-    "QB": 1,
-    "RB": 3,
-    "WR": 3,
-    "TE": 1,
-    "DEF": 1
-}
+prob = cp.Problem(objective, constraints)
 
-salary_cap = 60000
-
-for lineup in range(1,51):
-    _vars = {k: LpVariable.dict(k, v, cat='Binary') for k, v in points.items()}
-
-    prob = LpProblem("Fantasy", LpMaximize)
-    rewards = []
-    costs = []
-    position_constraints = []
-
-    for k, v in _vars.items():
-        costs += lpSum([salaries[k][i] * _vars[k][i] for i in v])
-        rewards += lpSum([points[k][i] * _vars[k][i] for i in v])
-        prob += lpSum([_vars[k][i] for i in v]) == pos_num_available[k]
-
-    prob += lpSum(rewards)
-    prob += lpSum(costs <= salary_cap)
-    if not lineup == 1:
-        prob += (lpSum(rewards) <= total_score-0.001)
-    prob.solve()
-
-    score = str(prob.objective)
-    constraints = [str(const) for const in prob.constraints.values()]
-    colnum = 1
-
-    for v in prob.variables():
-        score = score.replace(v.name, str(v.varValue))
-        if v.varValue !=0:
-            ws.cell(row=lineup, column=colnum).value = v.name
-            colnum +=1
-        total_score = eval(score)
-        ws.cell(row=lineup, column=colnum).value = total_score
-        print(lineup, total_score)
-
+prob.solve()
